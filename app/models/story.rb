@@ -149,6 +149,9 @@ class Story < ActiveRecord::Base
       if !t.tag.valid_for?(self.user)
         raise "#{self.user.username} does not have permission to use " <<
           "privileged tag #{t.tag.tag}"
+      elsif t.tag.inactive? && !t.new_record?
+        # stories can have inactive tags as long as they existed before
+        raise "#{self.user.username} cannot add inactive tag #{t.tag.tag}"
       end
     end
 
@@ -336,7 +339,7 @@ class Story < ActiveRecord::Base
 
     new_tag_names_a.each do |tag_name|
       if tag_name.to_s != "" && !self.tags.exists?(:tag => tag_name)
-        if t = Tag.where(:tag => tag_name).first
+        if t = Tag.active.where(:tag => tag_name).first
           # we can't lookup whether the user is allowed to use this tag yet
           # because we aren't assured to have a user_id by now; we'll do it in
           # the validation with check_tags
@@ -398,15 +401,25 @@ class Story < ActiveRecord::Base
     self.url.blank? ? self.comments_url : self.url
   end
 
-  def vote_summary
+  def vote_summary_for(user)
     r_counts = {}
+    r_whos = {}
     Vote.where(:story_id => self.id, :comment_id => nil).each do |v|
       r_counts[v.reason.to_s] ||= 0
       r_counts[v.reason.to_s] += v.vote
+      if user && user.is_moderator?
+        r_whos[v.reason.to_s] ||= []
+        r_whos[v.reason.to_s].push v.user.username
+      end
     end
 
     r_counts.keys.sort.map{|k|
-      k == "" ? "+#{r_counts[k]}" : "#{r_counts[k]} #{Vote::STORY_REASONS[k]}"
+      if k == ""
+        "+#{r_counts[k]}"
+      else
+        "#{r_counts[k]} #{Vote::STORY_REASONS[k]}" +
+          (user && user.is_moderator?? " (#{r_whos[k].join(", ")})" : "")
+      end
     }.join(", ")
   end
 end
